@@ -1,0 +1,18 @@
+Welcome to the Corelan GIT project page for mona.py development.
+GIT will only be used for active development, not for releases or updates from within Immunity Debugger.
+
+If you are interested in contributing to mona.py, please
+
+- create a fork of this project
+- clone your fork to your development machine.  
+   I am using tortoiseGit on my windows machine, which works fine.  
+   Don't forget to create a public/private keypair & configure your git page to accept your public key
+- implement your changes. Pay attention to coding styles (tab indentation, etc)
+- submit your changes as a pull request
+
+
+If you want the latest tested version of mona.py, please navigate to http://redmine.corelan.be/projects/mona
+
+Tx
+
+corelanc0d3r

@@ -1,0 +1,407 @@
+1. This function uses a combination SCAS and STOS to do its work. First, explain
+what is the type of the [EBP+8] and [EBP+C] in line 1 and 8, respectively. Next,
+explain what this snippet does.
+
+01: mov edi, [ebp+8]
+02: mov edx, edi
+03: xor eax, eax
+04: or ecx, 0FFFFFFFFh
+05: repne scasb
+06: add ecx, 2
+07: neg ecx
+08: mov al, [ebp+0Ch]
+09: mov edi, edx
+10: rep stosb
+11: mov eax, edx
+
+[EBP+8] is a pointer to a string, while [EBP+C] is a pointer to a char.
+At 01, the code loads the first string character into edi, from the address at [EBP+8]
+(which is ususally using CDECL convention the first parameter to a function passed using
+the stack into x86_32 architecture), then the eax register is zeroed at 03. At 04, the ecx
+register is masked against 0xFFFFFFF which puts the register word to a value of all 1's.
+At 05 the repne instruction scans starting from edi into forward direction a byte at time
+searching for the value contained into eax which is actually the null byte (the common
+value for string termination in ascii). REPNE also decrements the value of ecx by one
+at each iteration. REPNE and SCASB also sets the zero flag. So when the flag is setted
+or ecx arrives at zero iteration stops.
+At 06 ecx gets incremented by 2 and at 07 gets negated so it marks the position just after
+the null byte. The char at [EBP+12] (which using CDECL is also the second parameter to this
+function) is copied into eax, at 09 the edi points again to the first character of the string.
+At 10 REP STOSB is called starting counting down from the value actually contained in ecx, and
+filling the string with che char cotained into al register.
+At 11 the the new string filled with the character into al is returned into eax.
+This snippet of code let me think about the memset() function.
+
+------------------------------------------------------------------------------------------------
+
+1. Given what you learned about CALL and RET, explain how you would read
+the value of EIP? Why can't you just do MOV EAX, EIP?
+
+The value of EIP is directly modified using the CALL or the RET instruction,
+so it is not possible to modify it by MOV operations and alter directly the
+execution flow of the program.
+By the way a possible trick to read the EIP value which a function will issue on
+return is to grab it from the stack, for example using the following snippet of code:
+
+        section .text
+        global _start
+_start:
+        call get_eip
+        mov eax, 0x1
+        mov ebx, 0x0
+        int 0x80
+get_eip:
+        push ebp
+        mov ebp, esp
+        mov ebx, [esp+4]
+        leave
+        ret
+
+The CALL instruction, will put the EIP value on the stack, from the get_eip
+function is possible to get this value at [ESP+4].
+Another trick used into payload decoding function sometimes is of course the following:
+
+_start:
+        jmp short _target
+_get_eip:
+        pop esi
+_target:
+        call _get_eip
+
+Executing a short jump to _target which calls _get_eip putting the address of the
+current EIP on the stack and finally popping it into a register (in this case esi).
+
+-------------------------------------------------------------------------------------------
+
+2. Come up with at least two code sequences to set EIP to 0xAABBCCDD.
+
+First example:
+
+        section .text
+        global _start
+_start:
+        call alter_me
+        mov eax, 0x1
+        mov ebx, 0x0
+        int 0x80
+alter_me:
+        push ebp
+        mov ebp, esp
+        mov esp, ebp
+        pop ebp
+        push 0xAABBCCDD
+        ret
+
+Into the first example, the solution is to push on the stack, after the
+function epilogue of alter_me the desired address for the EIP. The RET
+instruction will pop it from the top of the stack and will put it into
+the EIP register.
+
+Second example:
+
+        section .text
+        global _start
+_start:
+        push 0xAABBCCDD
+        call alter_me
+alter_me:
+        push ebp
+        mov ebp,esp
+        mov esp,ebp
+        pop ebp
+        pop ebx
+        ret
+
+The second example's solution is specular respect the first. The desired address,
+is pushed onto the stack before the CALL instruction to alter_me.
+At the function epilogue of alter_me, after the usual pop ebp, before the RET instruction
+is issued getting the into ebx the top of the stack that is the real EIP address.
+In this manner, at the top of the stacks remains the value 0xAABBCCDD so when the
+RET is executed the value 0xAABBCCDD is stored into the EIP register.
+
+----------------------------------------------------------------------------------------------
+
+3. In the example function, addme, what would happen if the stack pointer were
+not properly restored before executing RET?
+
+Into the function's body after the function prologue the stack is untouched, no
+space for local vars is allocated.
+So nothing happens.
+
+-----------------------------------------------------------------------------------------------
+
+4. In all of the calling conventions explained, the return value is stored in a 32
+bit register (EAX). What happens when the return value does not fit in a 32-bit
+register? Write a program to experiment and evaluate your answer. Does the
+mechanism change from compiler to compiler?
+
+Here a simple snippet of code which uses a function to return a value (called test struct)
+bigger than 32 bits:
+
+#include <stdio.h>
+#include <stdlib.h>
+
+struct test {
+  unsigned int a;
+  unsigned int b;
+  unsigned int c;
+};
+
+
+static struct test
+test_return(void)
+{
+  struct test ret_test;
+  ret_test.a = 0x1;
+  ret_test.b = 0x2;
+  ret_test.c = 0x3;
+  return ret_test;
+}
+    
+int
+main(int argc, char *argv[])
+{
+  struct test my_test;
+  my_test = test_return();
+  printf("%d %d %d\n",my_test.a, my_test.b, my_test.c);
+  return 0;
+}
+
+The first disassebly which follows here is about the test_function() and
+the code is compiled using gcc 4.8.2:
+
+<test_return>:
+        01:	55	        push   ebp
+        02:	89 e5                   mov    ebp,esp
+        03:	83 ec 10                sub    esp,0x10
+        04:	c7 45 f4 01 00 00 00    mov    DWORD PTR [ebp-0xc],0x1
+        05:	c7 45 f8 02 00 00 00    mov    DWORD PTR [ebp-0x8],0x2
+        06:	c7 45 fc 03 00 00 00    mov    DWORD PTR [ebp-0x4],0x3
+        07:	8b 45 08                mov    eax,DWORD PTR [ebp+0x8]
+        08:	8b 55 f4                mov    edx,DWORD PTR [ebp-0xc]
+        09:	89 10                   mov    DWORD PTR [eax],edx
+        10:	8b 55 f8                mov    edx,DWORD PTR [ebp-0x8]
+        11:	89 50 04                mov    DWORD PTR [eax+0x4],edx
+        12:	8b 55 fc                mov    edx,DWORD PTR [ebp-0x4]
+        13:	89 50 08                mov    DWORD PTR [eax+0x8],edx
+        14:	8b 45 08                mov    eax,DWORD PTR [ebp+0x8]
+        15:	c9                      leave  
+        16:	c2 04 00                ret    0x4
+
+From 01 to 02, the usual function prologue is builded. At 03 space on
+the stack is reserved for ret_struct, it's 16 bytes despite the fact
+ret_struct is 12 bytes because compiler padding.
+From 04 to 06 ret_struct is filled in reverse order.
+At 07 into eax gets loaded the address of my_test declared into the
+main() function.
+From 08 to 13, ret_struct fields are copied into my_test struct
+using the edx register to hold the current field to copy.
+At 14, the eax gets filled again with the my_test struct address,
+which now has the fields of ret_struct.
+So the stack is used to return values bigger than 32 bits, and the
+eax points to the first address on the stack which references the
+result.
+
+The second disasassebly comes from the clang 3.4.1:
+
+<test_return>:
+        01:	55                   	push   ebp
+        02:	89 e5                	mov    ebp,esp
+        03:	83 ec 10             	sub    esp,0x10
+        04:	8b 45 08             	mov    eax,DWORD PTR [ebp+0x8]
+        05:	c7 45 f0 01 00 00 00 	mov    DWORD PTR [ebp-0x10],0x1
+        06:	c7 45 f4 02 00 00 00 	mov    DWORD PTR [ebp-0xc],0x2
+        07:	c7 45 f8 03 00 00 00 	mov    DWORD PTR [ebp-0x8],0x3
+        08:	f2 0f 10 45 f0       	movsd  xmm0,QWORD PTR [ebp-0x10]
+        09:	f2 0f 11 00          	movsd  QWORD PTR [eax],xmm0
+        10:	c7 40 08 03 00 00 00 	mov    DWORD PTR [eax+0x8],0x3
+        11:	83 c4 10             	add    esp,0x10
+        12:	5d                   	pop    ebp
+        13:	c2 04 00             	ret    0x4
+
+From 01 to 02 there's the usual function prologue.
+At 03, 16 bytes gets allocated for ret_struct. At 04, the reference on the stack
+of my_test struct allocated into main, gets loaded into eax.
+From 05 to 07, fields of ret_struct are filled on the stack, putting the first
+value at the stack's top.
+At 08, something "strange" happens, the first 64 bits on the stack (starting from TOP)
+gets loaded into an XMMx register. XMM0-XMM7 are SSE2 registers and are 128 bits wide.
+This is what the Intel Manual vol. 2A says about the MOVSD instruction:
+
+"MOVSD moves a scalar double-precision floating-point value from the source
+operand (second operand) to the destination operand (first operand).
+The source and destination operands can be XMM registers or 64-bit memory
+locations. This instruction can be used to move a double-precision floating-point
+value to and from the low quad-word of an XMM register and a 64-bit memory location,
+or to move a double-precision floating-point value between the low quadwords of two XMM
+registers. The instruction cannot be used to transfer data between memory locations."
+
+At 09 my_struct which is referenced by it's address loaded into eax register, gets
+filled with the contents of the XMM0 register which holds respectively 64 bits
+taken from the stack which are the ret_struct value 0x1 and 0x2.
+At 10, the last ret_struct value is copied just after the 0x1 and 0x2 value.
+At 11 the ESP is incremented of 16 bytes and the function frame is freed.
+
+Despite this kind of optimizations using the XMM0 register and the unusual
+function epilogue, the return register EAX is used again to point to the first
+stack address where the struct is located.
+
+------------------------------------------------------------------------------------------------------
+
+1. Repeat the walk-through by yourself. Draw the stack layout, including parameters and local variables.
+
+You should do this alone, its struggling to put a stack layout here, I have done mine using paper and
+a pen. It's funny, try it yourself.
+
+2. In the example walk-through, we did a nearly one-to-one translation of the assembly code to C.
+As an exercise, re-decompile this whole function so that it looks more natural.
+What can you say about the developer's skill level/experience? Explain your reasons. Can you do a better job?
+
+The solution is at:
+https://github.com/chaostheory88/revengineering/blob/master/ch01/walk_through_decompiled.c
+
+3. In some of the assembly listings, the function name has a @ prefix followed by a number.
+Explain when and why this decoration exists.
+
+The '@' is present into functions which adopt fastcall and stdcall conventions, for example:
+3.a.
+	foo@8 means this function is using stdcall convention, parameters are passed from right
+	to left on the stack and the function on return issues a 'ret 8' to free allocated space if
+	in a 32bit arch are passed two 32 bits parameters. In other words the stack is freed by the
+	callee and not by the caller like in cdecl calling convention.
+3.b.
+	@foo@8 means this function is using fastcall convetion, first two params are passed, for
+	example, in a 32bit arch using registers ecx and edx, other params are passed using the stack.
+	Again the number 8 after the '@' is the number of bytes that the function needs to free on the stack
+	before it returns. So as well as the stdcall the callee has the obligation to free the stack.
+
+4. Implement the following functions in x86 assembly: strlen, strchr, memcpy,
+memset, strcmp, strset.
+
+You can find the solutions of this exercise at:
+https://github.com/chaostheory88/revengineering/blob/master/ch01/functions.s
+
+5. Decompile the following kernel routines in Windows:
+   -KeInitializeDpc
+   -KeInitializeApc
+   -ObFastDereferenceObject (and explain its calling convention)
+   -KeInitializeQueue
+   -KxWaitForLockChainValid
+   -KeReadyThread
+   -KiInitializeTSS
+   -RtlValidateUnicodeString
+
+You can find the solutions of this exercise at:
+https://github.com/chaostheory88/revengineering/tree/master/ch01/winxp_decompiled_functions
+
+6. Sample H. The function sub_13846 references several structures whose types are not entirely clear. 
+Your task is to first recover the function prototype and then try to reconstruct the structure fields.
+After reading Chapter 3, return to this exercise to see if your understanding has changed. (Note: This sample is targeting Windows XP x86.)
+
+7. Sample H. The function sub_10BB6 has a loop searching for something. 
+First recover the function prototype and then infer the types based on the context.
+Hint: You should probably have a copy of the PE specification nearby.
+
+8. Sample H. Decompile sub_11732 and explain the most likely programming construct used in the original code.
+
+9. Sample L. Explain what function sub_1000CEA0 does and then decompile it back to C.
+
+You can find the solutions of malware samples exercises at:
+https://github.com/chaostheory88/revengineering/tree/master/ch01/malware_exercises
+
+10. If the current privilege level is encoded in CS, which is modifiable by user-mode code,
+why can't user-mode code modify CS to change CPL?
+
+The CPL in the CS register must match with the current CPU's CPL level. So user software cannot
+directly change it.
+To switch between privilege levels in code segments the interrupt mechanism is needed.
+The actual CS CPL is compared against the DPL into the descriptor segment referenced by an
+in kernel segment selector. 
+If CPL <= DPL of the descriptor segment, the CPL gets updated and takes the value of the DPL
+into the kernel destination selector. 
+
+11. Read the Virtual Memory chapter in Intel Software Developer Manual, Volume 3 and AMD64 Architecture Programmer's Manual, Volume 2: System Programming.
+Perform a few virtual address to physical address translations yourself and verify the result with a kernel debugger. 
+Explain how data execution prevention (DEP) works.
+
+12. Bruce's favorite x86/x64 disassembly library is BeaEngine by BeatriX (www.beaengine.org).
+Experiment with it by writing a program to disassemble a binary at its entry point.
+
+-------------------------------------------------------------------------------------------------------------------
+
+1. Explain two methods to get the instruction pointer on x64. At least one of the methods must use RIP addressing.
+
+1.a:
+
+(gdb) disassemble _start
+Dump of assembler code for function _start:
+   0x0000000000400080 <+0>:	lea    rax,[rip+0x0]        # 0x400087 <_start+7>
+   0x0000000000400087 <+7>:	mov    rax,0x3c
+   0x000000000040008e <+14>:	mov    rdi,0xa
+   0x0000000000400095 <+21>:	syscall 
+End of assembler dump.
+(gdb) b _start 
+Breakpoint 1 at 0x400080: file get_rip.S, line 4.
+(gdb) r
+Starting program: /home/spike/documents/hacking/practical_rev_engineering/revengineering/ch01/get_rip 
+
+Breakpoint 1, _start () at get_rip.S:4
+4		lea rax, [rip] 
+(gdb) s
+5		mov rax, 0x3c
+(gdb) i r $rip
+rip            0x400087	0x400087 <_start+7>
+(gdb) i r $rax
+rax            0x400087	4194439
+
+1.b:
+
+(gdb) disassemble _start
+Dump of assembler code for function _start:
+   0x0000000000400080 <+0>:	call   0x400087 <_ouch>
+   0x0000000000400085 <+5>:	jmp    0x40008a <_exit>
+End of assembler dump.
+(gdb) disassemble _ouch 
+Dump of assembler code for function _ouch:
+   0x0000000000400087 <+0>:	pop    rax
+   0x0000000000400088 <+1>:	push   rax
+   0x0000000000400089 <+2>:	ret    
+End of assembler dump.
+(gdb) disassemble _exit
+Dump of assembler code for function _exit:
+   0x000000000040008a <+0>:	mov    rax,0x3c
+   0x0000000000400091 <+7>:	mov    rdi,0xa
+   0x0000000000400098 <+14>:	syscall 
+End of assembler dump.
+(gdb) b _start
+Breakpoint 1 at 0x400080: file get_rip2.S, line 4.
+(gdb) r
+Starting program: /home/spike/documents/hacking/practical_rev_engineering/revengineering/ch01/get_rip2 
+
+Breakpoint 1, _start () at get_rip2.S:4
+4		call _ouch
+(gdb) s
+_ouch () at get_rip2.S:7
+7		pop rax
+(gdb) s
+_ouch () at get_rip2.S:8
+8		push rax
+(gdb) i r $rax
+rax            0x400085	4194437
+(gdb) i r $rip
+rip            0x400088	0x400088 <_ouch+1>
+(gdb) s
+_ouch () at get_rip2.S:9
+9		ret
+(gdb) i r $rip
+rip            0x400089	0x400089 <_ouch+2>
+(gdb) s
+_start () at get_rip2.S:5
+5		jmp _exit
+(gdb) i r $rip
+rip            0x400085	0x400085 <_start+5>
+(gdb) 
+
+2. Perform a virtual-to-physical address translation on x64. Were there any major differences compared to x86?
+
+-------------------------------------------------------------------------------------------------------------------

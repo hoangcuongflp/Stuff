@@ -1,0 +1,18 @@
+AUTHORS
+--------
+    Aaron Portnoy       
+    Brandon Edwards  
+    Kelly Lum   
+
+CONTRIBUTORS
+-------------
+    Logan Brown
+    Zef Cekaj
+    Peter Vreugdenhil
+    Jasiel Spelman
+    Marc 'van Hauser' Heuse
+
+
+CONTACT
+--------
+    aaron [ at ] exodusintel [ dot ] com

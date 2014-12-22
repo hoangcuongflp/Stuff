@@ -1,0 +1,6 @@
+buildx86/
+buildx64
+doc/
+bin/Release/
+standalone-binaries-*/
+rop_mosaic.png
